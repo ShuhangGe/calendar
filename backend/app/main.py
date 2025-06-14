@@ -9,11 +9,26 @@ from .config import settings
 from .services.storage_service import StorageService
 from .services.auth_service import AuthService
 from .services.agent_service import AgentService
+from .services.encryption_service import EncryptionService
+from .services.vector_service import VectorService
+from .services.fact_service import FactService
+from .services.fact_extraction_agent import FactExtractionAgent
 
-# Initialize services
+# Initialize core services
 storage_service = StorageService()
 auth_service = AuthService()
 agent_service = AgentService()
+
+# Initialize long-term memory services
+encryption_service = EncryptionService(settings.fact_encryption_key)
+vector_service = VectorService(
+    chroma_persist_directory=settings.chroma_persist_directory,
+    openai_api_key=settings.openai_api_key,
+    embedding_model=settings.embedding_model,
+    similarity_threshold=settings.vector_similarity_threshold
+)
+fact_service = FactService(encryption_service, vector_service)
+fact_extraction_agent = FactExtractionAgent(fact_service, settings.openai_api_key)
 
 # Create FastAPI app
 app = FastAPI(
@@ -34,22 +49,70 @@ app.add_middleware(
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables on startup"""
+    """Initialize database tables and long-term memory components on startup"""
     try:
+        # Initialize core database
         storage_service.init_db()
         print("Database initialized successfully")
+        
+        # Initialize long-term memory components
+        await initialize_long_term_memory()
+        print("Long-term memory system initialized successfully")
+        
     except Exception as e:
-        print(f"Database initialization failed: {e}")
+        print(f"Initialization failed: {e}")
+
+async def initialize_long_term_memory():
+    """Initialize long-term memory components"""
+    try:
+        # Ensure Chroma directory exists
+        import os
+        os.makedirs(settings.chroma_persist_directory, exist_ok=True)
+        
+        # Test vector service connection
+        stats = vector_service.get_collection_stats()
+        print(f"Chroma collection stats: {stats}")
+        
+        # Test encryption service
+        test_encrypt = encryption_service.encrypt_fact("test", "test_user", "test_hash")
+        test_decrypt = encryption_service.decrypt_fact(test_encrypt, "test_user", "test_hash")
+        assert test_decrypt == "test"
+        print("Encryption service test passed")
+        
+    except Exception as e:
+        print(f"Long-term memory initialization error: {e}")
+        # Don't fail the whole app if long-term memory has issues
+        pass
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     """Health check endpoint for deployment monitoring"""
-    return {
+    health_status = {
         "status": "healthy",
         "version": settings.version,
-        "environment": settings.environment
+        "environment": settings.environment,
+        "services": {
+            "database": "healthy",
+            "long_term_memory": "unknown"
+        }
     }
+    
+    # Check long-term memory services
+    try:
+        vector_stats = vector_service.get_collection_stats()
+        if "error" not in vector_stats:
+            health_status["services"]["long_term_memory"] = "healthy"
+            health_status["services"]["vector_db_stats"] = vector_stats
+        else:
+            health_status["services"]["long_term_memory"] = "degraded"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["services"]["long_term_memory"] = "unhealthy"
+        health_status["services"]["long_term_memory_error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    return health_status
 
 # Root endpoint - serve web frontend
 @app.get("/")
@@ -219,11 +282,20 @@ async def root():
     """
     return HTMLResponse(content=html_content)
 
-# Import API routes (these will be created next)
+# Import API routes
+try:
+    from .api.v1 import facts
+    # Include facts router
+    app.include_router(facts.router, prefix="/api/v1", tags=["facts"])
+    print("Facts API router included successfully")
+except ImportError as e:
+    print(f"Warning: Could not import facts router: {e}")
+
+# Other API routes (to be implemented)
 # from .api.v1 import auth, chat, diary, calendar, sync
 # from .api import websocket
 
-# Include API routers
+# Include other API routers (when implemented)
 # app.include_router(auth.router, prefix="/api/v1/auth", tags=["authentication"])
 # app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 # app.include_router(diary.router, prefix="/api/v1/diary", tags=["diary"])

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, UUID, ForeignKey, Integer, Date, Boolean, JSON
+from sqlalchemy import Column, String, Text, DateTime, UUID, ForeignKey, Integer, Date, Boolean, JSON, Float, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,6 +22,7 @@ class User(Base):
     calendar_events = relationship("CalendarEvent", back_populates="user")
     conversations = relationship("Conversation", back_populates="user")
     sync_logs = relationship("SyncLog", back_populates="user")
+    user_facts = relationship("UserFact", back_populates="user")
     
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -96,4 +97,43 @@ class SyncLog(Base):
     user = relationship("User", back_populates="sync_logs")
     
     def __repr__(self):
-        return f"<SyncLog(id={self.id}, action={self.action})>" 
+        return f"<SyncLog(id={self.id}, action={self.action})>"
+
+class UserFact(Base):
+    __tablename__ = "user_facts"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    fact_type = Column(String, nullable=False)  # personal, preference, work, health
+    fact_key = Column(String, nullable=False)  # encrypted field name
+    fact_value = Column(Text, nullable=False)  # encrypted value
+    confidence_score = Column(Float, default=0.0)  # 0.0-1.0
+    source_conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_accessed = Column(DateTime(timezone=True), server_default=func.now())
+    is_sensitive = Column(Boolean, default=False)
+    encryption_key_version = Column(Integer, default=1)
+    
+    # Relationships
+    user = relationship("User", back_populates="user_facts")
+    source_conversation = relationship("Conversation")
+    vector_embeddings = relationship("VectorEmbedding", back_populates="fact")
+    
+    def __repr__(self):
+        return f"<UserFact(id={self.id}, fact_type={self.fact_type})>"
+
+class VectorEmbedding(Base):
+    __tablename__ = "vector_embeddings"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fact_id = Column(UUID(as_uuid=True), ForeignKey("user_facts.id"), nullable=False)
+    embedding_vector = Column(LargeBinary, nullable=False)  # Serialized vector
+    embedding_model = Column(String, default="text-embedding-ada-002")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    vector_dimension = Column(Integer, default=1536)  # OpenAI ada-002 dimension
+    
+    # Relationships
+    fact = relationship("UserFact", back_populates="vector_embeddings")
+    
+    def __repr__(self):
+        return f"<VectorEmbedding(id={self.id}, model={self.embedding_model})>" 

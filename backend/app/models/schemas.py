@@ -141,4 +141,66 @@ class PaginatedResponse(BaseModel):
 # Error Schemas
 class ErrorResponse(BaseModel):
     detail: str
-    error_code: Optional[str] = None 
+    error_code: Optional[str] = None
+
+# UserFact Schemas
+class UserFactBase(BaseModel):
+    fact_type: str
+    fact_key: str
+    fact_value: str
+    confidence_score: float = 0.0
+    is_sensitive: bool = False
+
+class UserFactCreate(UserFactBase):
+    source_conversation_id: Optional[uuid.UUID] = None
+
+class UserFactUpdate(BaseModel):
+    fact_type: Optional[str] = None
+    fact_key: Optional[str] = None
+    fact_value: Optional[str] = None
+    confidence_score: Optional[float] = None
+    is_sensitive: Optional[bool] = None
+
+class UserFactResponse(UserFactBase):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    source_conversation_id: Optional[uuid.UUID] = None
+    created_at: datetime
+    last_accessed: datetime
+    encryption_key_version: int
+    
+    class Config:
+        from_attributes = True
+
+# VectorEmbedding Schemas
+class VectorEmbeddingResponse(BaseModel):
+    id: uuid.UUID
+    fact_id: uuid.UUID
+    embedding_model: str
+    created_at: datetime
+    vector_dimension: int
+    
+    class Config:
+        from_attributes = True
+
+# Fact Search Schemas
+class FactSearchRequest(BaseModel):
+    query: str
+    fact_types: Optional[List[str]] = None
+    min_confidence: float = 0.0
+    limit: int = 10
+
+class FactSearchResponse(BaseModel):
+    facts: List[UserFactResponse]
+    relevance_scores: List[float]
+    search_time: float
+
+# Fact Extraction Schemas
+class FactExtractionRequest(BaseModel):
+    conversation_id: uuid.UUID
+    force_extraction: bool = False
+
+class FactExtractionResponse(BaseModel):
+    extracted_facts: List[UserFactResponse]
+    extraction_confidence: float
+    processing_time: float 

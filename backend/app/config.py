@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     push_notification_key: Optional[str] = None
     
+    # Long-term Memory Configuration
+    fact_encryption_key: str = "your-fact-encryption-key-change-this"
+    chroma_persist_directory: str = "./chroma_db"
+    embedding_model: str = "text-embedding-ada-002"
+    vector_similarity_threshold: float = 0.6
+    max_relevant_facts: int = 10
+    
     # Environment
     environment: str = "development"
     

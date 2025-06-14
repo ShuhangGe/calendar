@@ -92,7 +92,7 @@ def confirmation_node(state: AgentState) -> AgentState:
 
 def context_enrichment_node(state: AgentState) -> AgentState:
     """
-    Add user history context to improve processing
+    Add user history context and relevant facts to improve processing
     """
     storage_service = StorageService()
     user_id = uuid.UUID(state["user_id"])
@@ -101,15 +101,80 @@ def context_enrichment_node(state: AgentState) -> AgentState:
     recent_entries = storage_service.get_recent_diary_entries(user_id, limit=5)
     upcoming_events = storage_service.get_upcoming_events(user_id, limit=5)
     
+    # Get relevant user facts for context (requires fact service injection)
+    user_facts = []
+    fact_context = ""
+    
+    try:
+        # Get user context using fact retrieval
+        user_context_data = get_user_context(state["user_input"], str(user_id))
+        user_facts = user_context_data.get("facts", [])
+        fact_context = user_context_data.get("context", "")
+    except Exception as e:
+        # Graceful fallback if fact service unavailable
+        user_facts = []
+        fact_context = ""
+    
     context_info = {
         "recent_diary_count": len(recent_entries),
         "upcoming_events_count": len(upcoming_events),
-        "user_timezone": state["timezone"]
+        "user_timezone": state["timezone"],
+        "relevant_facts_count": len(user_facts)
     }
     
     # Store context for use in processing nodes
     state["context_info"] = str(context_info)
+    state["user_facts"] = user_facts
+    state["fact_context"] = fact_context
+    state["personalization_enabled"] = len(user_facts) > 0
+    
     return state
+
+def get_user_context(user_input: str, user_id: str) -> dict:
+    """
+    Get user context using vector similarity search
+    This function requires proper dependency injection in production
+    """
+    try:
+        # Placeholder for fact service integration
+        # In production, this would:
+        # 1. Use dependency injection to get FactService
+        # 2. Get user password hash from session
+        # 3. Call fact_service.get_relevant_facts()
+        
+        # For now, return empty context to avoid breaking the system
+        return {
+            "facts": [],
+            "context": "",
+            "retrieval_time": 0.0
+        }
+        
+        # Production implementation would look like:
+        # fact_service = get_fact_service()  # Dependency injection
+        # user_password_hash = get_user_session().password_hash
+        # 
+        # relevant_facts = fact_service.get_relevant_facts(
+        #     db=get_db_session(),
+        #     user_id=user_id,
+        #     user_password_hash=user_password_hash,
+        #     context=user_input,
+        #     max_facts=5
+        # )
+        # 
+        # fact_context = generate_fact_context_string(relevant_facts)
+        # 
+        # return {
+        #     "facts": [fact.dict() for fact in relevant_facts],
+        #     "context": fact_context,
+        #     "retrieval_time": time.time()
+        # }
+        
+    except Exception as e:
+        return {
+            "facts": [],
+            "context": "",
+            "error": str(e)
+        }
 
 def extract_datetime_info(text: str, timezone: str = "UTC") -> Optional[datetime]:
     """
@@ -305,28 +370,129 @@ def notification_scheduling_node(state: AgentState) -> AgentState:
     
     return state
 
+def fact_extraction_trigger_node(state: AgentState) -> AgentState:
+    """
+    Trigger background fact extraction from the conversation
+    """
+    try:
+        # This node triggers background fact extraction
+        # In production, this would use Celery for async processing
+        
+        classification = state["classification"]
+        user_id = state["user_id"]
+        
+        # Only extract facts from diary entries and calendar events
+        if classification in ["diary", "calendar"]:
+            # Get conversation ID from storage result or create one
+            conversation_data = {
+                "user_input": state["user_input"],
+                "agent_response": state.get("agent_response", ""),
+                "classification": classification,
+                "user_id": user_id
+            }
+            
+            # TODO: In production, trigger background fact extraction
+            # Background task would:
+            # 1. Store conversation in database
+            # 2. Extract facts using FactExtractionAgent
+            # 3. Store extracted facts
+            
+            state["fact_extraction_triggered"] = True
+            state["fact_extraction_status"] = "queued"
+        else:
+            state["fact_extraction_triggered"] = False
+            state["fact_extraction_status"] = "skipped"
+        
+    except Exception as e:
+        state["fact_extraction_triggered"] = False
+        state["fact_extraction_status"] = f"error: {str(e)}"
+    
+    return state
+
 def generate_response_node(state: AgentState) -> AgentState:
     """
-    Generate final response to user based on classification and storage result
+    Generate final response to user based on classification, storage result, and user facts
     """
     classification = state["classification"]
     storage_result = state.get("storage_result", "")
+    user_facts = state.get("user_facts", [])
+    fact_context = state.get("fact_context", "")
+    personalization_enabled = state.get("personalization_enabled", False)
     
     if state.get("requires_confirmation", False):
         # Response already set in confirmation_node
         return state
     
-    if classification == "diary":
-        state["agent_response"] = f"✓ Saved to your diary for {datetime.now().strftime('%B %d, %Y')}"
-    elif classification == "calendar":
-        if state["extracted_datetime"]:
-            date_str = state["extracted_datetime"].strftime('%B %d, %Y at %I:%M %p')
-            state["agent_response"] = f"✓ Added to calendar: {date_str}"
+    # Generate personalized response using facts
+    if personalization_enabled and user_facts:
+        base_response = ""
+        
+        if classification == "diary":
+            base_response = f"✓ Saved to your diary for {datetime.now().strftime('%B %d, %Y')}"
+        elif classification == "calendar":
+            if state["extracted_datetime"]:
+                date_str = state["extracted_datetime"].strftime('%B %d, %Y at %I:%M %p')
+                base_response = f"✓ Added to calendar: {date_str}"
+            else:
+                base_response = "✓ Added to your calendar"
+        elif classification == "query":
+            base_response = state["processed_content"]
         else:
-            state["agent_response"] = "✓ Added to your calendar"
-    elif classification == "query":
-        state["agent_response"] = state["processed_content"]
+            base_response = "I processed your message, but I'm not sure how to categorize it."
+        
+        # Enhance response with personal context
+        enhanced_response = generate_personalized_response(
+            base_response, user_facts, fact_context, classification
+        )
+        state["agent_response"] = enhanced_response
     else:
-        state["agent_response"] = "I processed your message, but I'm not sure how to categorize it."
+        # Standard responses without personalization
+        if classification == "diary":
+            state["agent_response"] = f"✓ Saved to your diary for {datetime.now().strftime('%B %d, %Y')}"
+        elif classification == "calendar":
+            if state["extracted_datetime"]:
+                date_str = state["extracted_datetime"].strftime('%B %d, %Y at %I:%M %p')
+                state["agent_response"] = f"✓ Added to calendar: {date_str}"
+            else:
+                state["agent_response"] = "✓ Added to your calendar"
+        elif classification == "query":
+            state["agent_response"] = state["processed_content"]
+        else:
+            state["agent_response"] = "I processed your message, but I'm not sure how to categorize it."
     
-    return state 
+    return state
+
+def generate_personalized_response(base_response: str, user_facts: list, fact_context: str, classification: str) -> str:
+    """
+    Generate personalized response using user facts
+    """
+    try:
+        # Create personalization prompt
+        personalization_prompt = f"""
+        Base response: "{base_response}"
+        
+        User facts context: {fact_context}
+        
+        Classification: {classification}
+        
+        Enhance this response with relevant personal touches based on the user's facts.
+        Keep it natural and helpful. Don't mention facts explicitly unless relevant.
+        Maximum 2-3 sentences.
+        
+        Enhanced response:
+        """
+        
+        messages = [SystemMessage(content=personalization_prompt)]
+        response = llm.invoke(messages)
+        
+        enhanced = response.content.strip()
+        
+        # Fallback to base response if enhancement fails
+        if not enhanced or len(enhanced) < 10:
+            return base_response
+            
+        return enhanced
+        
+    except Exception as e:
+        # Graceful fallback to base response
+        return base_response 

@@ -9,6 +9,7 @@ from .nodes import (
     store_diary_node,
     store_calendar_node,
     notification_scheduling_node,
+    fact_extraction_trigger_node,
     generate_response_node
 )
 from . import AgentState
@@ -28,6 +29,7 @@ def create_agent_workflow():
     workflow.add_node("process_query", process_query_node)
     workflow.add_node("store_diary", store_diary_node)
     workflow.add_node("store_calendar", store_calendar_node)
+    workflow.add_node("fact_extraction_trigger", fact_extraction_trigger_node)
     workflow.add_node("notification_scheduling", notification_scheduling_node)
     workflow.add_node("generate_response", generate_response_node)
     
@@ -67,7 +69,11 @@ def create_agent_workflow():
             return "generate_response"  # Queries don't need storage
     
     def route_after_storage(state: AgentState):
-        """Route to notification or response generation"""
+        """Route to fact extraction after storage"""
+        return "fact_extraction_trigger"
+    
+    def route_after_fact_extraction(state: AgentState):
+        """Route to notification or response generation after fact extraction"""
         classification = state["classification"]
         
         if classification == "calendar":
@@ -121,18 +127,27 @@ def create_agent_workflow():
     
     workflow.add_edge("process_query", "generate_response")
     
-    # Storage routes to notification or response
+    # Storage routes to fact extraction
     workflow.add_conditional_edges(
         "store_diary",
         route_after_storage,
         {
-            "generate_response": "generate_response"
+            "fact_extraction_trigger": "fact_extraction_trigger"
         }
     )
     
     workflow.add_conditional_edges(
         "store_calendar",
         route_after_storage,
+        {
+            "fact_extraction_trigger": "fact_extraction_trigger"
+        }
+    )
+    
+    # Fact extraction routes to notification or response
+    workflow.add_conditional_edges(
+        "fact_extraction_trigger",
+        route_after_fact_extraction,
         {
             "notification_scheduling": "notification_scheduling",
             "generate_response": "generate_response"
